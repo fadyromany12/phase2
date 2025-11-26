@@ -1781,6 +1781,19 @@ body.dark-mode .dropdown-option.selected {
   
   <hr class="section-divider">
   
+  <div class="form-container">
+    <h3>WFM Break Configuration</h3>
+    <p class="text-color-secondary">Define allowed durations for each break type.</p>
+    <table class="report-table" id="break-config-table">
+      <thead><tr><th>Project</th><th>Type</th><th>Duration (Min)</th><th>Is Paid?</th><th>Action</th></tr></thead>
+      <tbody id="break-config-body"></tbody>
+    </table>
+    <button class="btn-secondary" onclick="addBreakRuleRow()" style="margin-top:10px;">+ Add Rule</button>
+    <button class="btn-primary" onclick="saveBreakConfig()">Save Configuration</button>
+  </div>
+  
+  <hr class="section-divider">
+  
   <div id="balance-adjustment-section" style="display: none;"> 
       <form id="balance-adjustment-form" class="form-container">
       <h2>Leave Balance Management</h2>
@@ -1880,16 +1893,27 @@ body.dark-mode .dropdown-option.selected {
           
           <div id="dashboard-grid">
             <div class="dashboard-card full-width">
-              <h3>Agent Status (Real-Time)</h3>
-              <div id="status-agent-list" class="chart-container"></div>
+              <h3>Live Team Status</h3>
+              <div style="overflow-x: auto;">
+                <table class="report-table" id="live-status-table">
+                  <thead>
+                    <tr>
+                      <th>Agent</th>
+                      <th>Current Status</th>
+                      <th>Duration</th>
+                      <th>Schedule</th>
+                      <th>Adherence Flags</th>
+                    </tr>
+                  </thead>
+                  <tbody id="live-status-body">
+                    </tbody>
+                </table>
+              </div>
             </div>
+            
             <div class="dashboard-card full-width">
-              <h3>Adherence Details (Today)</h3>
+              <h3>Shift Metrics</h3>
               <div id="adherence-detail-table" class="dashboard-list-container"></div>
-            </div>
-            <div class="dashboard-card full-width">
-              <h3>Pending Leave Requests (for selected users)</h3>
-              <div id="pending-leave-table" class="dashboard-list-container"></div>
             </div>
           </div>
         </div>
@@ -4381,114 +4405,117 @@ function populateHistoryReport(data) {
           return currentDashboardSelection.emails;
       }
       
-      function drawDashboard(data) {
-        // Explicitly check for data existence and validity for each section
-        if (!data || data.error) {
-          setStatus('dashboard-status', 'error', data.error || 'Failed to load dashboard data.');
-          document.getElementById('status-agent-list').innerHTML = '<p class="text-color-secondary">Error loading data.</p>'; 
-          document.getElementById('pending-leave-table').innerHTML = '<p class="text-color-secondary">Error loading data.</p>';
-          document.getElementById('adherence-detail-table').innerHTML = '<p class="text-color-secondary">Error loading data.</p>';
-          return;
+      let dashboardInterval = null; // Global variable to control the timer
+
+function drawDashboard(data) {
+  // 1. Error Handling
+  if (!data || data.error) {
+    setStatus('dashboard-status', 'error', data ? data.error : 'Failed to load dashboard data.');
+    document.getElementById('live-status-body').innerHTML = '<tr><td colspan="5" class="text-color-secondary" style="text-align:center;">Error loading data.</td></tr>';
+    return;
+  }
+  
+  setStatus('dashboard-status', 'success', 'Dashboard live.');
+  
+  const tbody = document.getElementById('live-status-body');
+  tbody.innerHTML = '';
+  
+  // 2. Clear any existing timer to prevent duplicates
+  if (dashboardInterval) clearInterval(dashboardInterval);
+  
+  const agentsWithTimers = []; // Array to track who needs a live timer
+
+  // 3. Render Rows
+  data.agentStatusList.forEach(agent => {
+    const statusClass = getStatusClass(agent.status);
+    
+    // --- Schedule Column Logic ---
+    let scheduleInfo = `<span class="text-color-secondary">Off</span>`;
+    if (agent.schedule) {
+        if (agent.schedule.start && agent.schedule.end) {
+            scheduleInfo = `${agent.schedule.start} - ${agent.schedule.end}`;
+        } else if (agent.schedule.leaveType && agent.schedule.leaveType !== 'Present' && agent.schedule.leaveType !== 'Day Off') {
+            scheduleInfo = `<span class="status-leave">${agent.schedule.leaveType}</span>`;
         }
+    }
+
+    // --- Adherence Flags Logic ---
+    let flags = [];
+    if (agent.metrics.tardy > 0) flags.push(`<span class="status-tag status-leave" title="Late by ${formatSeconds(agent.metrics.tardy)}">Late</span>`);
+    if (agent.metrics.early > 0) flags.push(`<span class="status-tag status-leave" title="Left early by ${formatSeconds(agent.metrics.early)}">Left Early</span>`);
+    
+    // Server-side Exceed Flags (Historical for the day)
+    if (agent.metrics.lunchExceed > 0) flags.push(`<span class="status-tag status-leave">Lunch Exc.</span>`);
+    if (agent.metrics.b1Exceed > 0 || agent.metrics.b2Exceed > 0) flags.push(`<span class="status-tag status-leave">Break Exc.</span>`);
+
+    const row = document.createElement('tr');
+    // Create unique ID for timer cell based on email to be safe
+    const safeId = agent.email.replace(/[^a-zA-Z0-9]/g, '');
+    
+    row.innerHTML = `
+      <td><strong>${agent.name}</strong></td>
+      <td><span class="status-tag status-${statusClass}">${agent.status}</span></td>
+      <td id="timer-${safeId}" style="font-family: monospace; font-size: 1.1rem;">--:--</td>
+      <td>${scheduleInfo}</td>
+      <td>${flags.join(' ') || '<span class="text-color-secondary">-</span>'}</td>
+    `;
+    tbody.appendChild(row);
+
+    // Add to timer list if they are currently active
+    if (agent.lastActionTime && agent.status !== 'Logged Out') {
+      // Determine allowed duration for this status from Break Config
+      // Status matches "On First Break", "On Lunch" -> key "First Break", "Lunch"
+      const breakType = agent.status.replace('On ', '');
+      const allowedDuration = data.breakRules ? data.breakRules[breakType] : 0;
+
+      agentsWithTimers.push({
+        id: `timer-${safeId}`,
+        start: agent.lastActionTime, // Timestamp from server
+        status: agent.status,
+        allowedDuration: allowedDuration // Minutes (0 if not a break or no rule)
+      });
+    }
+  });
+
+  // 4. Start Client-Side Interval (Updates every 1 second)
+  dashboardInterval = setInterval(() => {
+    const now = new Date().getTime();
+    
+    agentsWithTimers.forEach(item => {
+      const el = document.getElementById(item.id);
+      if (el) {
+        const diffSec = Math.floor((now - item.start) / 1000);
         
-        setStatus('dashboard-status', 'success', 'Dashboard loaded successfully.');
+        // Format: HH:MM:SS
+        const h = Math.floor(diffSec / 3600);
+        const m = Math.floor((diffSec % 3600) / 60);
+        const s = diffSec % 60;
         
-        // --- 1. Draw Status Agent List ---
-        const statusAgentDiv = document.getElementById('status-agent-list');
-        let statusHtml = '';
-        
-        if (!data.agentStatusList || data.agentStatusList.length === 0) {
-             statusHtml = '<p class="text-color-secondary">No user status information available for this date/team.</p>';
+        let timeStr = '';
+        if (h > 0) {
+            timeStr = `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
         } else {
-             data.agentStatusList.forEach(agent => {
-                  const statusClass = getStatusClass(agent.status);
-                  statusHtml += `
-                      <div class="agent-status-item">
-                          <strong>${agent.name}</strong>
-                          <span class="status-tag status-${statusClass}">${agent.status}</span>
-                      </div>
-                  `;
-             });
+            timeStr = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
         }
-        statusAgentDiv.innerHTML = statusHtml;
-
-
-        // --- 2. Draw Adherence Detail List ---
-        const adherenceDetailDiv = document.getElementById('adherence-detail-table');
-        let adherenceHtml = '';
         
-        if (!data.individualAdherenceMetrics || data.individualAdherenceMetrics.length === 0) {
-            adherenceHtml = '<p class="text-color-secondary">No adherence data found for selected users today (No logins recorded).</p>';
-        } else {
-            // Filter users with zero deviation and sort by deviation (worst offenders first)
-            const filteredMetrics = data.individualAdherenceMetrics.filter(user => {
-                 const deviation = user.tardy + user.earlyLeave + user.breakExceed + user.lunchExceed;
-                 return deviation > 0 || user.overtime > 0;
-            });
-            
-            filteredMetrics.sort((a, b) => {
-                 // Sort primarily by negative deviation (Tardy, Early, Breaks)
-                 const aNegDeviation = a.tardy + a.earlyLeave + a.breakExceed + a.lunchExceed;
-                 const bNegDeviation = b.tardy + b.earlyLeave + b.breakExceed + b.lunchExceed;
-                 
-                 if (bNegDeviation !== aNegDeviation) {
-                    return bNegDeviation - aNegDeviation;
-                 }
-                 
-                 // Secondary sort by Overtime
-                 return b.overtime - a.overtime;
-            });
-            
-            if (filteredMetrics.length === 0) {
-                adherenceHtml = '<p class="text-color-secondary">All selected users have perfect adherence today. Great job!</p>';
-            } else {
-                filteredMetrics.forEach(user => {
-                    const totalBreakExceed = (parseInt(user.breakExceed, 10) || 0) + (parseInt(user.lunchExceed, 10) || 0);
-                    adherenceHtml += `
-                        <div class="dashboard-detail-item">
-                            <h4 class="detail-label" style="grid-column: 1 / -1; margin: 0; padding-bottom: 5px; border-bottom: 1px solid var(--border-color); color: var(--konecta-blue);">${user.name}</h4>
-                            
-                            <span class="detail-label">Tardy:</span>
-                            <span class="detail-value">${formatColoredSeconds(user.tardy, false)}</span>
-                            
-                            <span class="detail-label">Early Leave:</span>
-                            <span class="detail-value">${formatColoredSeconds(user.earlyLeave, false)}</span>
-                            
-                            <span class="detail-label">Overtime:</span>
-                            <span class="detail-value">${formatColoredSeconds(user.overtime, true)}</span>
-                            
-                            <span class="detail-label">Break Exceed:</span>
-                            <span class="detail-value">${formatColoredSeconds(totalBreakExceed, false)}</span>
-                            
-                        </div>
-                    `;
-                });
-            }
+        // Check for Real-Time Exceeding
+        let isExceeded = false;
+        if (item.allowedDuration > 0) {
+           // allowedDuration is in minutes, diffSec is seconds
+           if (diffSec > (item.allowedDuration * 60)) {
+               isExceeded = true;
+           }
         }
-        adherenceDetailDiv.innerHTML = adherenceHtml;
-
-
-        // --- 3. Draw Pending Leave List ---
-        const pendingLeaveDiv = document.getElementById('pending-leave-table');
-        let pendingLeaveHtml = '';
         
-        if (!data.pendingRequests || data.pendingRequests.length === 0) {
-             pendingLeaveHtml = '<p class="text-color-secondary">No pending leave requests for selected users.</p>';
+        if (isExceeded) {
+           el.innerHTML = `<span style="color: #dc2626; font-weight: 700;">${timeStr}</span>`;
         } else {
-            data.pendingRequests.forEach(req => {
-                pendingLeaveHtml += `
-                    <div class="dashboard-leave-item">
-                        <div class="item-details">
-                            <h4>${req.name} - ${req.type}</h4>
-                            <p><strong>Dates:</strong> ${formatDate(req.startDate)} (${req.days} days)</p>
-                        </div>
-                         <span class="status-badge status-pending">Pending</span>
-                    </div>
-                `;
-            });
+           el.innerHTML = timeStr;
         }
-        pendingLeaveDiv.innerHTML = pendingLeaveHtml;
       }
+    });
+  }, 1000);
+}
       
       // Function to get the current list of emails from the selection state
       function saveMyTeam() {
@@ -7349,6 +7376,51 @@ function actionOvertime(id, action) {
     })
     .withFailureHandler(err => alert(err.message))
     .webActionOvertime(id, action, comment, null);
+}
+
+function loadBreakConfig() {
+  google.script.run.withSuccessHandler(renderBreakConfig).webGetBreakConfig();
+}
+
+function renderBreakConfig(rules) {
+  const tbody = document.getElementById('break-config-body');
+  tbody.innerHTML = '';
+  rules.forEach(r => addBreakRuleRow(r));
+}
+
+function addBreakRuleRow(data = {}) {
+  const tbody = document.getElementById('break-config-body');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input type="text" class="brk-project" value="${data.project || 'All'}" style="width:100px;"></td>
+    <td>
+      <select class="brk-type">
+        <option value="First Break" ${data.type==='First Break'?'selected':''}>First Break</option>
+        <option value="Lunch" ${data.type==='Lunch'?'selected':''}>Lunch</option>
+        <option value="Last Break" ${data.type==='Last Break'?'selected':''}>Last Break</option>
+      </select>
+    </td>
+    <td><input type="number" class="brk-duration" value="${data.duration || 15}" style="width:60px;"></td>
+    <td><select class="brk-paid"><option value="TRUE" ${data.isPaid==='TRUE'?'selected':''}>Yes</option><option value="FALSE" ${data.isPaid==='FALSE'?'selected':''}>No</option></select></td>
+    <td><button class="deny-btn" style="padding:2px 8px;" onclick="this.closest('tr').remove()">X</button></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+function saveBreakConfig() {
+  const rows = document.querySelectorAll('#break-config-body tr');
+  const newRules = [];
+  rows.forEach(row => {
+    newRules.push({
+      project: row.querySelector('.brk-project').value,
+      type: row.querySelector('.brk-type').value,
+      duration: row.querySelector('.brk-duration').value,
+      isPaid: row.querySelector('.brk-paid').value,
+      deduct: row.querySelector('.brk-paid').value === 'FALSE' ? 'TRUE' : 'FALSE'
+    });
+  });
+  
+  google.script.run.withSuccessHandler(alert).webSaveBreakConfig(newRules);
 }
 
 
