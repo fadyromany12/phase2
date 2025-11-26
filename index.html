@@ -1258,26 +1258,6 @@ body.dark-mode .dropdown-option.selected {
   font-weight: 600;
 }
 
-
-.live-timer {
-  font-family: monospace;
-  font-weight: 700;
-  margin-left: 8px;
-  color: var(--text-color-secondary);
-}
-.live-timer.active {
-  color: var(--konecta-blue);
-}
-.live-timer.exceeded {
-  color: #dc2626; /* Red */
-  animation: pulse 2s infinite;
-}
-@keyframes pulse {
-  0% { opacity: 1; }
-  50% { opacity: 0.6; }
-  100% { opacity: 1; }
-}
-
       .read-only-field { background-color: #f3f4f6 !important; color: #6b7280 !important; cursor: not-allowed; }
   .profile-subview { animation: fadeIn 0.3s ease; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
@@ -2336,8 +2316,7 @@ body.dark-mode .dropdown-option.selected {
   </div>
 
   <br>
-  <button class="btn-secondary" onclick="runMigrationTool()">Run Data Base Migration Tool</button>
-  <div id="migration-status" class="status-message"></div>
+  
 
 </div>
 
@@ -2428,8 +2407,7 @@ body.dark-mode .dropdown-option.selected {
       const PLANNED_BREAK_SECONDS = 15 * 60; // 15 minutes
       const PLANNED_LUNCH_SECONDS = 30 * 60; // 30 minutes
       let selfUserName = ""; 
-      let selfRole = "agent";
-      let selfEmail = ""; 
+      let selfRole = "agent"; 
       let allUsersList = []; 
       let allAdminsList = []; 
       let lastHistoryData = null;
@@ -2536,10 +2514,10 @@ body.dark-mode .dropdown-option.selected {
       }
       // *** NEW HELPER FUNCTION to add in <script> tag ***
       function setAllPunchButtonsDisabled(disabled) {
-  document.querySelectorAll('#buttons button, #other-buttons button').forEach(btn => {
-    btn.disabled = disabled;
-  });
-}
+        document.querySelectorAll('#buttons button, #other-buttons button').forEach(btn => {
+          btn.disabled = disabled;
+        });
+      }
       // === TAB SWITCHING FUNCTION ===
 function showTab(tabName) {
   // Hide all panels
@@ -2673,48 +2651,48 @@ function populateUserInfo(user) {
     return;
   }
 
-  // 1. Set Global State
   selfUserName = user.name; 
-  selfEmail = user.email; // <--- Capture Email
   selfRole = user.role; 
   allUsersList = user.allUsers; 
   allAdminsList = user.allAdmins; 
   
   document.body.setAttribute('data-role', user.role);
   
-  // 2. Handle Pending Status
   if (user.accountStatus === 'Pending') {
     infoDiv.innerHTML = `<strong>Status:</strong> Pending Approval`;
     document.getElementById('app-sidebar').style.display = 'none';
     document.getElementById('punch-panel').innerHTML = `<h2>Pending</h2><p>Please wait for approval.</p>`;
-    if (user.isNewUser && typeof showSupervisorModal === 'function') showSupervisorModal(allAdminsList);
-    else if (typeof loadMyRegistrationStatus === 'function') loadMyRegistrationStatus();
+    if (user.isNewUser) showSupervisorModal(allAdminsList);
+    else loadMyRegistrationStatus();
     return;
   }
 
-  // 3. Display User Info
   infoDiv.innerHTML = `<strong>User:</strong> ${user.name} | <strong>Role:</strong> ${user.role}`;
   infoDiv.className = '';
   
   document.getElementById('buttons').style.display = 'block';
   document.getElementById('other-buttons').style.display = 'block';
 
-  // 4. Permission-based UI
+  // --- PERMISSIONS LOGIC ---
   const can = (perm) => user.permissions && user.permissions.includes(perm);
+
   const setDisplay = (id, condition) => {
       const el = document.getElementById(id);
       if(el) el.style.display = condition ? 'inline-block' : 'none';
   };
 
-  // Visibility Logic
+  // 1. Agent Tools
   setDisplay('my-schedule-tab-button', true);
   setDisplay('history-report-tab-button', true);
   setDisplay('coaching-tab-button', true);
-  setDisplay('overtime-tab-button', true);
+  setDisplay('overtime-tab-button', true); 
   
+  // 2. Management Tools
   setDisplay('dashboard-tab-button', can('VIEW_FULL_DASHBOARD'));
   setDisplay('leave-approval-tab-button', can('APPROVE_LEAVE'));
   setDisplay('reporting-line-tab-button', can('MANAGE_HIERARCHY'));
+
+  // 3. Admin Tools
   setDisplay('finance-admin-tab-button', can('MANAGE_FINANCE'));
   setDisplay('schedule-tab-button', can('EDIT_SCHEDULE'));
   setDisplay('project-admin-tab-button', can('MANAGE_PROJECTS'));
@@ -2723,23 +2701,24 @@ function populateUserInfo(user) {
   setDisplay('registration-admin-tab-button', can('HIRE_EMPLOYEE'));
   setDisplay('announcements-admin-tab-button', can('MANAGE_ANNOUNCEMENTS'));
   setDisplay('recruitment-tab-button', can('MANAGE_RECRUITMENT'));
-  setDisplay('hr-admin-tab-button', can('OFFBOARD_EMPLOYEE'));
-
-  // 5. Panel Setup
+  
+  // 4. HR Admin
+  setDisplay('hr-admin-tab-button', can('OFFBOARD_EMPLOYEE')); 
+  
+  // Specific Logic for Panels
   if (can('PUNCH_OTHERS')) {
       document.getElementById('admin-panel').style.display = 'block';
-      // Populate with "Myself" logic
-      populateAdminDropdown(allUsersList, selfUserName, 'agent-select', 'Punch for: Myself');
+      // *** FIX: Set default value to user.email so it selects them automatically ***
+      populateAdminDropdown(allUsersList, selfUserName, 'agent-select', 'Select User', user.email);
   }
   
   if (can('EDIT_SCHEDULE')) {
       populateAdminDropdown(allUsersList, selfUserName, 'schedule-agent-select', 'Select a user');
   }
 
-  // 6. Load Initial Data
   if (user.myBalances) populateMyBalances(user.myBalances);
   if (user.currentStatus) updateCurrentStatus(user.currentStatus);
-  if (typeof loadMyRequests === 'function') loadMyRequests();
+  loadMyRequests();
 }
 
       function loadUserInfo() { 
@@ -2815,8 +2794,9 @@ function populateUserInfo(user) {
           updateSelectButtonDisplay(type);
       }
       
-      // Replaces existing populateAdminDropdown
-function populateAdminDropdown(users, selfName, dropdownId, selfText) {
+      
+// Updated populateAdminDropdown to accept a default value
+function populateAdminDropdown(users, selfName, dropdownId, selfText, defaultVal = null) {
   // Map Dropdown IDs to their Container IDs
   const map = {
     'agent-select': 'agent-select-container',
@@ -2831,12 +2811,9 @@ function populateAdminDropdown(users, selfName, dropdownId, selfText) {
     'leave-report-user': 'leave-report-user-container',
     'perf-employee-select': 'perf-employee-select-container',
     'offboard-user-select': 'offboard-user-select-container',
-    
-    // --- NEW HR ADMIN MAPPINGS (Add these lines) ---
     'hr-balance-user-select': 'hr-balance-user-select-container',
     'hr-offboard-user-select': 'hr-offboard-user-select-container',
-    'ot-employee-select': 'ot-employee-select-container' // NEW PHASE 8
-  
+    'ot-employee-select': 'ot-employee-select-container'
   };
 
   // Special Handling for History (Multi-Select)
@@ -2852,6 +2829,7 @@ function populateAdminDropdown(users, selfName, dropdownId, selfText) {
 
   let userList = [...users];
   
+  // Pass defaultVal to the renderer
   renderGlobalUserSelector(containerId, userList, selfText, false, (vals) => {
       const val = vals[0] || '';
       
@@ -2864,7 +2842,7 @@ function populateAdminDropdown(users, selfName, dropdownId, selfText) {
           document.getElementById(containerId).appendChild(hidden);
       }
       hidden.value = val;
-  });
+  }, defaultVal);
 }
       
       function populateSupervisorDropdown(admins, dropdownId = 'leave-supervisor') {
@@ -2890,25 +2868,30 @@ function punch(action) {
   const adminSelect = document.getElementById('agent-select');
   let targetUserName = '';
   
-  // Logic: If admin, check dropdown. If dropdown empty/default, use self.
   if (selfRole === 'admin' || selfRole === 'superadmin') {
     const selectedEmail = adminSelect.value;
-    if (selectedEmail) {
+    
+    // --- FIX START ---
+    // If a specific email is selected, find that user.
+    if (selectedEmail && selectedEmail !== "") {
         const user = allUsersList.find(u => u.email === selectedEmail);
-        targetUserName = user ? user.name : selfUserName;
+        targetUserName = user ? user.name : '';
     } else {
+        // If "Punch for: Myself" is showing (value is empty), use the admin's own name.
         targetUserName = selfUserName;
     }
+    // --- FIX END ---
+
   } else {
     targetUserName = selfUserName;
   }
   
   if (!targetUserName) { 
-     setStatus('status', 'error', 'Could not identify user. Please reload the page.');
+     setStatus('status', 'error', 'Could not identify the user to punch for.');
      return;
   }
 
-  // Project Logic
+  // Project Logic (Keep existing Phase 3 logic)
   const projectSelect = document.getElementById('current-project-select');
   const projectId = projectSelect.value;
 
@@ -2926,10 +2909,7 @@ function punch(action) {
       } else {
         setStatus('status', 'success', response.message);
       }
-      // Update UI only if we punched for ourselves
-      if (targetUserName === selfUserName) {
-          updateCurrentStatus(response.newStatus); 
-      }
+      updateCurrentStatus(response.newStatus); 
     })
     .withFailureHandler(err => {
       setStatus('status', 'error', 'Unexpected error: ' + err.message);
@@ -3045,91 +3025,104 @@ function submitSchedule() {
         return str.trim();
       }
 
-      // --- NEW: Dynamic Status Timer ---
-let statusTimer = null;
+// --- NEW PHASE 1: Dynamic Status Timer & Logic ---
+      let statusTimer = null;
 
-function updateCurrentStatus(statusInfo) {
-  if (statusTimer) clearInterval(statusTimer);
+      function updateCurrentStatus(statusInfo) {
+        if (statusTimer) clearInterval(statusTimer);
 
-  const displayDiv = document.getElementById('current-status-display');
-  
-  // 1. Handle Logged Out State
-  if (!statusInfo || !statusInfo.status || statusInfo.status === 'Logged Out') {
-    displayDiv.style.visibility = 'hidden';
-    
-    // Enable Login, Disable Everything Else
-    setAllPunchButtonsDisabled(true);
-    const loginBtn = document.querySelector('button[onclick="punch(\'Login\')"]');
-    if (loginBtn) loginBtn.disabled = false;
-    
-    return;
-  }
+        const displayDiv = document.getElementById('current-status-display');
+        
+        // 1. Force ALL buttons to be enabled (Clickable) at all times
+        setAllPunchButtonsDisabled(false); 
 
-  const punchTime = new Date(statusInfo.time);
-  
-  // 2. Start Timer
-  const updateText = () => {
-    const now = new Date();
-    const diffMs = now.getTime() - punchTime.getTime();
-    const diffSec = Math.floor(diffMs / 1000);
-    
-    let elapsedStr = '';
-    if (diffSec < 60) elapsedStr = `${diffSec}s ago`;
-    else if (diffSec < 3600) elapsedStr = `${Math.floor(diffSec / 60)}m ${diffSec % 60}s ago`;
-    else elapsedStr = `${Math.floor(diffSec / 3600)}h ${Math.floor((diffSec % 3600) / 60)}m ago`;
+        // Handle Logged Out Status Display
+        if (!statusInfo || !statusInfo.status || statusInfo.status === 'Logged Out') {
+          displayDiv.style.visibility = 'hidden';
+          displayDiv.className = 'status-message'; // Reset class
+          return;
+        }
 
-    let statusClass = getStatusClass(statusInfo.status);
-    if (statusInfo.status === 'Logged In') statusClass = 'Logged-In';
+        const punchTime = new Date(statusInfo.time);
+        
+        // Calculate Shift End
+        let shiftEnd = null;
+        if (statusInfo.schedule && statusInfo.schedule.end) {
+          shiftEnd = new Date(statusInfo.schedule.end);
+        }
 
-    // Exceed Check
-    let warningMsg = "";
-    let plannedSeconds = 0;
-    if (statusInfo.status === 'On First Break' || statusInfo.status === 'On Last Break') plannedSeconds = PLANNED_BREAK_SECONDS;
-    else if (statusInfo.status === 'On Lunch') plannedSeconds = PLANNED_LUNCH_SECONDS;
-    
-    if (plannedSeconds > 0 && diffSec > plannedSeconds) {
-      const ex_m = Math.floor((diffSec - plannedSeconds) / 60);
-      const ex_s = (diffSec - plannedSeconds) % 60;
-      warningMsg = ` <strong style="color: var(--status-leave-text);">(Exceeded by ${ex_m}m ${ex_s}s)</strong>`;
-      displayDiv.className = `status-message visible status-leave`;
-    } else {
-      displayDiv.className = `status-message visible status-${statusClass}`;
-    }
+        const updateText = () => {
+          const now = new Date();
+          const diffMs = now.getTime() - punchTime.getTime();
+          const diffSec = Math.floor(diffMs / 1000);
+          
+          let elapsedStr = '';
+          if (diffSec < 60) elapsedStr = `${diffSec}s`;
+          else if (diffSec < 3600) elapsedStr = `${Math.floor(diffSec / 60)}m ${diffSec % 60}s`;
+          else elapsedStr = `${Math.floor(diffSec / 3600)}h ${Math.floor((diffSec % 3600) / 60)}m`;
 
-    displayDiv.innerHTML = `
-      <strong>${statusInfo.status}</strong> 
-      (since ${formatTime(statusInfo.time)} - ${elapsedStr})${warningMsg}
-    `;
-  };
+          let statusClass = getStatusClass(statusInfo.status);
+          // Force specific class for "Logged In" to ensure green
+          if (statusInfo.status === 'Logged In') statusClass = 'Logged-In';
 
-  updateText(); 
-  statusTimer = setInterval(updateText, 1000);
+          let warningMsg = "";
+          let isWarning = false;
+          
+          // 1. Break Exceed Logic
+          let plannedSeconds = 0;
+          // Check specifically for Break/Lunch statuses
+          if (statusInfo.status === 'On First Break' || statusInfo.status === 'On Last Break') {
+             plannedSeconds = PLANNED_BREAK_SECONDS;
+          } else if (statusInfo.status === 'On Lunch') {
+             plannedSeconds = PLANNED_LUNCH_SECONDS;
+          }
+          
+          if (plannedSeconds > 0) {
+            // We are on a break, check if exceeded
+            if (diffSec > plannedSeconds) {
+              const exMs = diffSec - plannedSeconds;
+              const exM = Math.floor(exMs / 60);
+              const exS = exMs % 60;
+              warningMsg = ` <strong style="color: #b91c1c;">(Exceeded by ${exM}m ${exS}s)</strong>`;
+              isWarning = true;
+              statusClass = 'On-Leave'; // Turn red
+            } else {
+              // Still within break time
+              const rem = plannedSeconds - diffSec;
+              const remM = Math.floor(rem / 60);
+              warningMsg = ` <span style="color: #15803d; font-size: 0.9em;">(${remM}m remaining)</span>`;
+            }
+          } 
+          // 2. Overtime Logic (Only if Logged In and not on break)
+          else if (statusInfo.status === 'Logged In' && shiftEnd && now > shiftEnd) {
+            const otMs = now.getTime() - shiftEnd.getTime();
+            const otSec = Math.floor(otMs / 1000);
+            const otH = Math.floor(otSec / 3600);
+            const otM = Math.floor((otSec % 3600) / 60);
+            
+            warningMsg = ` <strong style="color: #d97706;">(OVERTIME: ${otH}h ${otM}m)</strong>`;
+            // We keep the statusClass green (Logged-In) but add the orange text, 
+            // or we can change the bg to yellow/orange if preferred.
+            // For now, let's make the badge look distinct.
+            statusClass = 'pending'; // Uses the yellow/orange style
+          } 
 
-  // 3. Button Logic
-  if (statusInfo.status === 'Logged In') {
-    // Enable all buttons EXCEPT Login
-    setAllPunchButtonsDisabled(false);
-    const loginBtn = document.querySelector('button[onclick="punch(\'Login\')"]');
-    if (loginBtn) loginBtn.disabled = true;
-  } 
-  else if (statusInfo.status.startsWith('On ')) {
-    // Disable all buttons EXCEPT the matching 'Out' button
-    setAllPunchButtonsDisabled(true);
-    const type = statusInfo.status.replace('On ', '');
-    const map = {
-      'First Break': 'First Break Out', 
-      'Lunch': 'Lunch Out', 
-      'Last Break': 'Last Break Out',
-      'Coaching': 'Coaching Out', 
-      'Meeting': 'Meeting Out', 
-      'Personal': 'Personal Out'
-    };
-    if (map[type]) {
-       const btn = document.querySelector(`button[onclick="punch('${map[type]}')"]`);
-       if(btn) btn.disabled = false;
-    }
-  }
-}
+          // Apply classes
+          displayDiv.className = `status-message visible status-${statusClass}`;
+          
+          // Render
+          displayDiv.innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:center; gap:10px;">
+               <span style="font-size:1.2em;">${statusInfo.status}</span>
+               <span style="font-weight:400; font-size:1em; opacity:0.9;">${elapsedStr}</span>
+            </div>
+            <div style="font-size:0.9em; margin-top:4px;">${warningMsg}</div>
+          `;
+        };
+
+        updateText(); 
+        statusTimer = setInterval(updateText, 1000);
+      }
       
       // REPLACE this function in your <script> tag
 function getStatusClass(status) {
@@ -4407,56 +4400,6 @@ function populateHistoryReport(data) {
           // This function is now deprecated in favor of using the global state in saveCurrentSelection
           return currentDashboardSelection.emails;
       }
-
-      // [index.html] Add to Script
-
-let dashboardInterval = null;
-
-// --- DASHBOARD TIMER ENGINE ---
-let dashboardInterval = null;
-
-function startDashboardTimers() {
-  if (dashboardInterval) clearInterval(dashboardInterval);
-  dashboardInterval = setInterval(updateDashboardTimers, 1000);
-  updateDashboardTimers(); // Run immediately
-}
-
-function updateDashboardTimers() {
-  const timers = document.querySelectorAll('.live-timer');
-  const now = new Date();
-  
-  timers.forEach(timer => {
-    const startTimeStr = timer.getAttribute('data-start');
-    const limitSec = parseInt(timer.getAttribute('data-limit'), 10) || 0;
-    
-    if (!startTimeStr || startTimeStr === 'null') {
-      timer.textContent = '';
-      return;
-    }
-    
-    const startTime = new Date(startTimeStr);
-    const diffMs = now - startTime;
-    const diffSec = Math.floor(diffMs / 1000);
-    
-    if (diffSec < 0) { timer.textContent = "00:00:00"; return; }
-    
-    // Format Time HH:MM:SS
-    const h = Math.floor(diffSec / 3600).toString().padStart(2, '0');
-    const m = Math.floor((diffSec % 3600) / 60).toString().padStart(2, '0');
-    const s = Math.floor(diffSec % 60).toString().padStart(2, '0');
-    
-    timer.textContent = `${h}:${m}:${s}`;
-    
-    // Visual Logic: Red if exceeded limit, Blue/Active otherwise
-    if (limitSec > 0 && diffSec > limitSec) {
-      timer.classList.add('exceeded');
-      timer.classList.remove('active');
-    } else {
-      timer.classList.remove('exceeded');
-      timer.classList.add('active');
-    }
-  });
-}
       
       function drawDashboard(data) {
         // Explicitly check for data existence and validity for each section
@@ -4471,38 +4414,23 @@ function updateDashboardTimers() {
         setStatus('dashboard-status', 'success', 'Dashboard loaded successfully.');
         
         // --- 1. Draw Status Agent List ---
-        // --- 1. Draw Status Agent List ---
         const statusAgentDiv = document.getElementById('status-agent-list');
         let statusHtml = '';
-
+        
         if (!data.agentStatusList || data.agentStatusList.length === 0) {
-             statusHtml = '<p class="text-color-secondary">No user status information available.</p>';
+             statusHtml = '<p class="text-color-secondary">No user status information available for this date/team.</p>';
         } else {
              data.agentStatusList.forEach(agent => {
                   const statusClass = getStatusClass(agent.status);
-                  
-                  // Determine if we should show a timer for this status
-                  const showTimer = agent.status !== 'Logged Out' && agent.status !== 'Day Off' && agent.status !== 'Pending Login' && agent.status !== 'Absent' && agent.time;
-                  
-                  const timerHtml = showTimer 
-                    ? `<span class="live-timer" data-start="${agent.time}" data-limit="${agent.limit || 0}">Loading...</span>` 
-                    : '';
-
                   statusHtml += `
                       <div class="agent-status-item">
                           <strong>${agent.name}</strong>
-                          <div style="display:flex; align-items:center;">
-                            ${timerHtml}
-                            <span class="status-tag status-${statusClass}" style="margin-left:10px;">${agent.status}</span>
-                          </div>
+                          <span class="status-tag status-${statusClass}">${agent.status}</span>
                       </div>
                   `;
              });
         }
         statusAgentDiv.innerHTML = statusHtml;
-
-        // *** CRITICAL: Trigger the timer loop ***
-        startDashboardTimers();
 
 
         // --- 2. Draw Adherence Detail List ---
@@ -6354,6 +6282,54 @@ function saveProject() {
     .webSaveProject(data);
 }
 
+// *** IMPORTANT: OVERRIDE THE OLD punch() FUNCTION ***
+// We need to pass the selected project ID to the backend
+function punch(action) {
+  const adminSelect = document.getElementById('agent-select');
+  let targetUserName = '';
+  
+  if (selfRole === 'admin' || selfRole === 'superadmin') {
+    const selectedEmail = adminSelect.value;
+    const user = allUsersList.find(u => u.email === selectedEmail);
+    targetUserName = user ? user.name : '';
+  } else {
+    targetUserName = selfUserName;
+  }
+  
+  if (!targetUserName) { 
+     setStatus('status', 'error', 'Please select a user to punch for.');
+     return;
+  }
+
+  // --- PHASE 3 CHANGE ---
+  const projectSelect = document.getElementById('current-project-select');
+  const projectId = projectSelect.value;
+
+  // If Logging In or Switching, Project is Mandatory
+  if ((action === 'Login' || action === 'Switch Project') && !projectId) {
+    // THIS LINE ENSURES YOU SEE THE ERROR
+    setStatus('status', 'error', 'Please select a Project before punching.');
+    return;
+  }
+  // ----------------------
+
+  setStatus('status', 'processing', `Processing "${action}" for ${targetUserName}...`);
+
+  google.script.run
+    .withSuccessHandler(response => {
+      if (response.message.startsWith('Error:')) {
+        setStatus('status', 'error', response.message.replace('Error: ', ''));
+      } else {
+        setStatus('status', 'success', response.message);
+      }
+      updateCurrentStatus(response.newStatus); 
+    })
+    .withFailureHandler(err => {
+      setStatus('status', 'error', 'Unexpected error: ' + err.message);
+    })
+    // Pass projectId as the 4th argument (null is for adminTimestamp)
+    .webPunch(action, targetUserName, null, projectId); 
+}
 
 // ==========================================
       // === PHASE 4: RECRUITMENT JS FUNCTIONS ===
@@ -6986,25 +6962,26 @@ function uploadFinanceCSV() {
 
 /**
  * REUSABLE COMPONENT: Searchable Multi-Select Dropdown
- * @param {string} containerId - The ID of the DIV to replace the select with.
- * @param {Array} users - Array of user objects {name, email}.
- * @param {string} placeholder - Default text.
- * @param {boolean} isMulti - true for checkboxes, false for single radio selection.
- * @param {Function} onCallback - (Optional) Function called on selection change.
+ * UPDATED: Now accepts a defaultVal to pre-select an option.
  */
-function renderGlobalUserSelector(containerId, users, placeholder, isMulti, onCallback) {
+function renderGlobalUserSelector(containerId, users, placeholder, isMulti, onCallback, defaultVal = null) {
   const container = document.getElementById(containerId);
   if (!container) return;
 
   container.innerHTML = '';
   container.className = 'multi-select-wrapper';
 
-  // State
+  // State: Initialize with default value if provided
   let selectedValues = new Set();
+  if (defaultVal) {
+      if (Array.isArray(defaultVal)) defaultVal.forEach(v => selectedValues.add(v));
+      else selectedValues.add(defaultVal);
+  }
 
   // UI Elements
   const trigger = document.createElement('div');
   trigger.className = 'multi-select-trigger';
+  // Placeholder will be updated by updateUI() immediately if there is a default
   trigger.innerHTML = `<span class="trigger-text">${placeholder}</span><span class="arrow">▼</span>`;
   
   const dropdown = document.createElement('div');
@@ -7075,7 +7052,7 @@ function renderGlobalUserSelector(containerId, users, placeholder, isMulti, onCa
     } else if (count === 1) {
         const email = Array.from(selectedValues)[0];
         const user = users.find(u => u.email === email);
-        span.textContent = user ? user.name : email;
+        span.textContent = user ? user.name : email; // Show Name
         span.style.color = '#333';
     } else {
         span.textContent = `${count} Selected`;
@@ -7116,15 +7093,15 @@ function renderGlobalUserSelector(containerId, users, placeholder, isMulti, onCa
       if (!container.contains(e.target)) dropdown.classList.remove('open');
   });
 
+  // Initial Render
   renderOptions();
+  
+  // *** CRITICAL FIX: Apply default value immediately ***
+  if (defaultVal) {
+      updateUI();
+      if (onCallback) onCallback(Array.from(selectedValues));
+  }
 }
-
-// Close dropdowns on outside click
-document.addEventListener('click', (e) => {
-    if (!e.target.closest('.multi-select-wrapper')) {
-        document.querySelectorAll('.multi-select-dropdown').forEach(d => d.classList.remove('open'));
-    }
-});
 
 
 // --- HR ADMIN FUNCTIONS ---
@@ -7260,15 +7237,6 @@ function submitHrOffboarding() {
   .webOffboardEmployee({email, exitDate: date, reason});
 }
 
-function runMigrationTool() {
-  if (!confirm("Run full database migration? This creates accounts for everyone in the old 'Data Base' sheet.")) return;
-  setStatus('migration-status', 'processing', 'Migrating data... This make take a minute.');
-  
-  google.script.run.withSuccessHandler(msg => {
-    setStatus('migration-status', 'success', msg);
-  }).withFailureHandler(err => setStatus('migration-status', 'error', err.message))
-  ._MIGRATE_OLD_DB_TO_NEW();
-}
 
 
 // --- OVERTIME FUNCTIONS ---
