@@ -1678,60 +1678,87 @@ body.dark-mode .dropdown-option.selected {
         <!--    TAB 5: SCHEDULE EDITOR PANEL    -->
         <!-- ================================== -->
         <div id="schedule-panel" class="tab-panel">
-          
-          <form id="csv-import-form" class="form-container">
-            <h2>Bulk Schedule Importer (CSV)</h2>
-            <p class="text-color-secondary" style="font-size: 0.9rem;">
-              Upload a CSV with headers: <code>Name</code>, <code>StartDate</code>, <code>ShiftStartTime</code>, <code>EndDate</code>, <code>ShiftEndTime</code>, <code>LeaveType</code>, <code>agent email</code>
-            </p>
-            <button 
-              type="button" 
-              class="btn-secondary" 
-              style="margin-bottom: 20px; max-width: 300px;" 
-              onclick="downloadScheduleTemplate()">
-              Download CSV Template
-            </button>
-            <div class="form-group">
-              <label for="csv-file-input">Select CSV File</label>
-              <input type="file" id="csv-file-input" accept=".csv">
-            </div>
-            <button type="button" class="btn-primary" onclick="importScheduleCSV()">Import CSV</button>
-          </form>
-          <div id="csv-import-status" class="status-message"></div>
-          
-          <hr class="section-divider">
-          
-          <form id="schedule-form" class="form-container">
-            <h2>Manual Schedule Editor</h2>
-            <div class="form-group">
-  <label>User</label>
-  <div id="schedule-agent-select-container"></div>
-</div>
-            <div class="form-row">
-              <div class="form-group"><label for="schedule-start-date">Start Date</label><input type="date" id="schedule-start-date" required></div>
-              <div class="form-group"><label for="schedule-end-date">End Date (Optional)</label><input type="date" id="schedule-end-date"><small>Leave blank to submit for a single day.</small></div>
-            </div>
-            <div class="form-group"><label for="schedule-leave-type">Leave Type / Status</label><select id="schedule-leave-type" onchange="toggleTimeFields()"><option value="Present">Present</option><option value="Sick">Sick</option><option value="Annual">Annual</option><option value="Casual">Casual</option><option value="Absent">Absent</option><option value="Day Off">Day Off</option></select></div>
-            
-            <div id="time-fields" class="form-row">
-              <div class="form-group">
-                <label for="schedule-start-time">Shift Start Time</label>
-                <input type="time" id="schedule-start-time">
-              </div>
-              <div class="form-group">
-                <label for="schedule-end-date-shift">Shift End Date</label>
-                <input type="date" id="schedule-end-date-shift">
-                <small>Only fill if shift ends on a different day.</small>
-              </div>
-              <div class="form-group">
-                <label for="schedule-end-time">Shift End Time</label>
-                <input type="time" id="schedule-end-time">
-              </div>
-            </div>
-            <button type="button" class="btn-primary" onclick="submitSchedule()">Submit Schedule(s)</button>
-          </form>
-          <div id="schedule-status" class="status-message"></div>
+  
+  <form id="csv-import-form" class="form-container">
+    <h2>Bulk Schedule Importer (CSV)</h2>
+    <p class="text-color-secondary" style="font-size: 0.9rem;">
+      Upload a CSV with headers: <code>Name</code>, <code>StartDate</code>, <code>ShiftStartTime</code>, <code>EndDate</code>, <code>ShiftEndTime</code>, <code>LeaveType</code>, <code>agent email</code>
+    </p>
+    <button 
+      type="button" 
+      class="btn-secondary" 
+      style="margin-bottom: 20px; max-width: 300px;" 
+      onclick="downloadScheduleTemplate()">
+      Download CSV Template
+    </button>
+    <div class="form-group">
+      <label for="csv-file-input">Select CSV File</label>
+      <input type="file" id="csv-file-input" accept=".csv">
+    </div>
+    <button type="button" class="btn-primary" onclick="importScheduleCSV()">Import CSV</button>
+  </form>
+  <div id="csv-import-status" class="status-message"></div>
+  
+  <hr class="section-divider">
+  
+  <form id="schedule-form" class="form-container">
+    <h2>Manual Schedule Editor</h2>
+    <div class="form-group">
+      <label>User</label>
+      <div id="schedule-agent-select-container"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label for="schedule-start-date">Start Date</label><input type="date" id="schedule-start-date" required></div>
+      <div class="form-group"><label for="schedule-end-date">End Date (Optional)</label><input type="date" id="schedule-end-date"><small>Leave blank to submit for a single day.</small></div>
+    </div>
+    <div class="form-group"><label for="schedule-leave-type">Leave Type / Status</label><select id="schedule-leave-type" onchange="toggleTimeFields()"><option value="Present">Present</option><option value="Sick">Sick</option><option value="Annual">Annual</option><option value="Casual">Casual</option><option value="Absent">Absent</option><option value="Day Off">Day Off</option></select></div>
+    
+    <div id="time-fields" class="form-row" style="flex-wrap: wrap;">
+      <div class="form-group" style="min-width: 140px;">
+        <label for="schedule-start-time">Shift Start</label>
+        <input type="time" id="schedule-start-time">
+      </div>
+      
+      <div class="form-group" style="min-width: 140px;">
+        <label>1st Break Window</label>
+        <div style="display:flex; gap:5px;">
+          <input type="time" id="schedule-b1-start" placeholder="Start" style="font-size:0.8rem;">
+          <input type="time" id="schedule-b1-end" placeholder="End" style="font-size:0.8rem;">
         </div>
+      </div>
+
+      <div class="form-group" style="min-width: 140px;">
+        <label>Lunch Window</label>
+        <div style="display:flex; gap:5px;">
+          <input type="time" id="schedule-lunch-start" placeholder="Start" style="font-size:0.8rem;">
+          <input type="time" id="schedule-lunch-end" placeholder="End" style="font-size:0.8rem;">
+        </div>
+      </div>
+
+      <div class="form-group" style="min-width: 140px;">
+        <label>2nd Break Window</label>
+        <div style="display:flex; gap:5px;">
+          <input type="time" id="schedule-b2-start" placeholder="Start" style="font-size:0.8rem;">
+          <input type="time" id="schedule-b2-end" placeholder="End" style="font-size:0.8rem;">
+        </div>
+      </div>
+
+      <div class="form-group" style="min-width: 140px;">
+        <label for="schedule-end-time">Shift End</label>
+        <input type="time" id="schedule-end-time">
+      </div>
+      
+      <div class="form-group" style="min-width: 140px;">
+        <label for="schedule-end-date-shift">Shift End Date</label>
+        <input type="date" id="schedule-end-date-shift">
+        <small>If overnight</small>
+      </div>
+    </div>
+
+    <button type="button" class="btn-primary" onclick="submitSchedule()">Submit Schedule(s)</button>
+  </form>
+  <div id="schedule-status" class="status-message"></div>
+</div>
         
         <!-- ================================== -->
         <!--   TAB 6: LEAVE APPROVALS PANEL     -->
@@ -2942,53 +2969,57 @@ function toggleTimeFields() {
   }
 }
       
-     // REPLACE this function in your <script> tag
+
 function submitSchedule() {
   try {
     const userEmail = document.getElementById('schedule-agent-select').value;
+    // Handle case where allUsersList might not be fully loaded yet
     const user = allUsersList.find(u => u.email === userEmail);
-    if (!user) throw new Error("Please select a user."); 
+    const userName = user ? user.name : userEmail; // Fallback
+    
+    if (!userEmail) throw new Error("Please select a user."); 
     
     let startDate = document.getElementById('schedule-start-date').value;
-    let endDateRange = document.getElementById('schedule-end-date').value; // This is the date *range*
+    let endDateRange = document.getElementById('schedule-end-date').value;
     const leaveType = document.getElementById('schedule-leave-type').value;
+    
+    // Standard Times
     let startTime = document.getElementById('schedule-start-time').value;
     let endTime = document.getElementById('schedule-end-time').value;
-    
-    // *** NEW: Read the SHIFT end date ***
     let shiftEndDate = document.getElementById('schedule-end-date-shift').value;
+
+    // New Break Windows
+    const windows = {
+      b1s: document.getElementById('schedule-b1-start').value,
+      b1e: document.getElementById('schedule-b1-end').value,
+      ls:  document.getElementById('schedule-lunch-start').value,
+      le:  document.getElementById('schedule-lunch-end').value,
+      b2s: document.getElementById('schedule-b2-start').value,
+      b2e: document.getElementById('schedule-b2-end').value
+    };
     
     if (!startDate) throw new Error("Please select a Start Date.");
-    if (!endDateRange) endDateRange = startDate; // Default range to single day
-    if (new Date(endDateRange) < new Date(startDate)) throw new Error("End Date of range cannot be before Start Date.");
+    if (!endDateRange) endDateRange = startDate;
     
     if (leaveType === 'Present') {
-      if (!startTime || !endTime) throw new Error("Shift Start and End Time are required for 'Present' status.");
-      // If shiftEndDate is blank, it will be handled by the server
+      if (!startTime || !endTime) throw new Error("Shift Start and End Time are required for Present status.");
     } else {
-      startTime = "";
-      endTime = "";
-      shiftEndDate = ""; // Clear shift end date if not present
+      startTime = ""; endTime = ""; shiftEndDate = "";
+      // Clear windows if not present
+      for(let k in windows) windows[k] = "";
     }
     
-    setStatus('schedule-status', 'processing', `Submitting schedule for ${user.name}...`);
+    setStatus('schedule-status', 'processing', `Submitting schedule for ${userName}...`);
 
     google.script.run
       .withSuccessHandler(msg => {
-        if (msg.startsWith('Error:')) {
-          setStatus('schedule-status', 'error', msg.replace('Error: ', ''));
-        } else {
-          setStatus('schedule-status', 'success', msg);
-          document.getElementById('schedule-form').reset();
-          document.getElementById('schedule-start-date').valueAsDate = new Date();
-          toggleTimeFields();
-        }
+        setStatus('schedule-status', 'success', msg);
+        document.getElementById('schedule-form').reset();
+        document.getElementById('schedule-start-date').valueAsDate = new Date();
+        toggleTimeFields();
       })
-      .withFailureHandler(err => {
-        setStatus('schedule-status', 'error', 'Unexpected error: ' + (err.message || JSON.stringify(err)));
-      })
-      // *** MODIFIED: Pass shiftEndDate to the new function signature ***
-      .webSubmitScheduleRange(userEmail, user.name, startDate, endDateRange, startTime, endTime, leaveType, shiftEndDate); 
+      .withFailureHandler(err => setStatus('schedule-status', 'error', err.message))
+      .webSubmitScheduleRange(userEmail, userName, startDate, endDateRange, startTime, endTime, leaveType, shiftEndDate, windows); 
 
   } catch (err) {
     setStatus('schedule-status', 'error', err.message);
