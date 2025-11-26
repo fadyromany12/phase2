@@ -3046,7 +3046,7 @@ function submitSchedule() {
       }
 
       // --- NEW: Dynamic Status Timer ---
-et statusTimer = null;
+let statusTimer = null;
 
 function updateCurrentStatus(statusInfo) {
   if (statusTimer) clearInterval(statusTimer);
@@ -4412,16 +4412,15 @@ function populateHistoryReport(data) {
 
 let dashboardInterval = null;
 
-// 1. Start the Interval
+// --- DASHBOARD TIMER ENGINE ---
+let dashboardInterval = null;
+
 function startDashboardTimers() {
   if (dashboardInterval) clearInterval(dashboardInterval);
-  
-  // Update every second
   dashboardInterval = setInterval(updateDashboardTimers, 1000);
   updateDashboardTimers(); // Run immediately
 }
 
-// 2. The Logic Loop
 function updateDashboardTimers() {
   const timers = document.querySelectorAll('.live-timer');
   const now = new Date();
@@ -4441,21 +4440,17 @@ function updateDashboardTimers() {
     
     if (diffSec < 0) { timer.textContent = "00:00:00"; return; }
     
-    // Format Time
+    // Format Time HH:MM:SS
     const h = Math.floor(diffSec / 3600).toString().padStart(2, '0');
     const m = Math.floor((diffSec % 3600) / 60).toString().padStart(2, '0');
     const s = Math.floor(diffSec % 60).toString().padStart(2, '0');
     
     timer.textContent = `${h}:${m}:${s}`;
     
-    // Check Exceedance (Only if limit > 0)
+    // Visual Logic: Red if exceeded limit, Blue/Active otherwise
     if (limitSec > 0 && diffSec > limitSec) {
       timer.classList.add('exceeded');
-      const exceedSec = diffSec - limitSec;
-      const em = Math.floor(exceedSec / 60);
-      const es = exceedSec % 60;
-      // Optional: Append Exceed Time
-      // timer.textContent += ` (+${em}m ${es}s)`; 
+      timer.classList.remove('active');
     } else {
       timer.classList.remove('exceeded');
       timer.classList.add('active');
