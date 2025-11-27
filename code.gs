@@ -1242,7 +1242,7 @@ function getUserInfo() {
 }
 
 
-// ================= PUNCH MAIN FUNCTION (PHASE 8 UPDATED) =================
+// ================= PUNCH MAIN FUNCTION (FIXED LOGIC) =================
 function punch(action, targetUserName, puncherEmail, adminTimestamp) { 
   const ss = getSpreadsheet();
   const adherenceSheet = getOrCreateSheet(ss, SHEET_NAMES.adherence);
@@ -1271,7 +1271,7 @@ function punch(action, targetUserName, puncherEmail, adminTimestamp) {
   const shiftDate = getShiftDate(new Date(nowTimestamp), SHIFT_CUTOFF_HOUR);
   const formattedDate = Utilities.formatDate(shiftDate, timeZone, "MM/dd/yyyy");
 
-  // Other Codes
+  // === 4. HANDLE "OTHER CODES" ===
   const otherCodeActions = ["Meeting", "Personal", "Coaching"];
   for (const code of otherCodeActions) {
     if (action.startsWith(code)) {
@@ -1281,7 +1281,7 @@ function punch(action, targetUserName, puncherEmail, adminTimestamp) {
     }
   }
 
-  // Adherence Punch
+  // === 5. PROCEED WITH ADHERENCE PUNCH ===
   const row = findOrCreateRow(adherenceSheet, userName, shiftDate, formattedDate); 
   const columns = { "Login": 3, "First Break In": 4, "First Break Out": 5, "Lunch In": 6, "Lunch Out": 7, "Last Break In": 8, "Last Break Out": 9, "Logout": 10 };
   const col = columns[action];
@@ -1289,6 +1289,8 @@ function punch(action, targetUserName, puncherEmail, adminTimestamp) {
 
   const isActionIn = (action === "Login" || action === "First Break In" || action === "Lunch In" || action === "Last Break In");
   const existingValue = adherenceSheet.getRange(row, col).getValue();
+  
+  // Strict double-punch check for "In" actions
   if (isActionIn && existingValue) throw new Error(`Error: "${action}" has already been punched today.`);
 
   const currentPunches = adherenceSheet.getRange(row, 3, 1, 8).getValues()[0];
@@ -1309,6 +1311,7 @@ function punch(action, targetUserName, puncherEmail, adminTimestamp) {
   adherenceSheet.getRange(row, col).setValue(nowTimestamp);
   logsSheet.appendRow([new Date(), userName, userEmail, action, nowTimestamp]);
 
+  // Update local punches for immediate calculation
   switch(action) {
     case "Login": punches.login = nowTimestamp; break;
     case "First Break In": punches.firstBreakIn = nowTimestamp; break;
@@ -1320,71 +1323,100 @@ function punch(action, targetUserName, puncherEmail, adminTimestamp) {
     case "Logout": punches.logout = nowTimestamp; break;
   }
 
-  // Break Calculations
+  // === BREAK EXCEED CALCULATIONS ===
   try {
-    let duration = 0, diff = 0, exceedMsg = "No";
+    let duration = 0, diff = 0;
     if (punches.firstBreakIn && punches.firstBreakOut) {
       duration = timeDiffInSeconds(punches.firstBreakIn, punches.firstBreakOut);
       diff = duration - getBreakConfig("First Break").default;
-      adherenceSheet.getRange(row, 17).setValue((diff > 0) ? diff : "No");
+      adherenceSheet.getRange(row, 17).setValue((diff > 0) ? diff : "No"); // Col Q
     }
     if (punches.lunchIn && punches.lunchOut) {
       duration = timeDiffInSeconds(punches.lunchIn, punches.lunchOut);
       diff = duration - getBreakConfig("Lunch").default;
-      adherenceSheet.getRange(row, 18).setValue((diff > 0) ? diff : "No");
+      adherenceSheet.getRange(row, 18).setValue((diff > 0) ? diff : "No"); // Col R
     }
     if (punches.lastBreakIn && punches.lastBreakOut) {
       duration = timeDiffInSeconds(punches.lastBreakIn, punches.lastBreakOut);
       diff = duration - getBreakConfig("Last Break").default;
-      adherenceSheet.getRange(row, 19).setValue((diff > 0) ? diff : "No");
+      adherenceSheet.getRange(row, 19).setValue((diff > 0) ? diff : "No"); // Col S
     }
   } catch (e) { logsSheet.appendRow([new Date(), userName, userEmail, "Break Exceed Calc Error", e.message]); }
 
-  // Break Window Validation
-  let violation = "No";
+  // === SCHEDULE MATCHING & LEAVE TYPE ===
   const scheduleData = scheduleSheet.getDataRange().getValues();
   let shiftStartDateObj = null, shiftEndDateObj = null;
   let schedBreak1 = null, schedLunch = null, schedBreak2 = null;
+  let scheduledLeaveType = "Present"; // Default to Present if punching
 
   for (let i = 1; i < scheduleData.length; i++) {
     const rowDat = scheduleData[i];
-    if (String(rowDat[6]).toLowerCase() === userEmail && parseDate(rowDat[1])?.getTime() === shiftDate.getTime()) {
+    // Trim and lower case comparison for safety
+    const schEmail = String(rowDat[6]).trim().toLowerCase();
+    
+    // Check Email and Date match
+    if (schEmail === userEmail && parseDate(rowDat[1])?.getTime() === shiftDate.getTime()) {
+       
+       // Found Schedule!
+       scheduledLeaveType = rowDat[5] || "Present";
+       
        if (rowDat[2]) shiftStartDateObj = createDateTime(new Date(rowDat[1]), Utilities.formatDate(rowDat[2], timeZone, "HH:mm:ss"));
        if (rowDat[4]) {
          const baseEndDate = rowDat[3] ? new Date(rowDat[3]) : new Date(rowDat[1]);
          shiftEndDateObj = createDateTime(baseEndDate, Utilities.formatDate(rowDat[4], timeZone, "HH:mm:ss"));
-         if(shiftStartDateObj && shiftEndDateObj && shiftEndDateObj < shiftStartDateObj) shiftEndDateObj.setDate(shiftEndDateObj.getDate() + 1);
+         // Handle overnight logic
+         if(shiftStartDateObj && shiftEndDateObj && shiftEndDateObj < shiftStartDateObj) {
+            shiftEndDateObj.setDate(shiftEndDateObj.getDate() + 1);
+         }
        }
+       
+       // Windows
        const parseWindow = (t) => t ? createDateTime(new Date(rowDat[1]), Utilities.formatDate(t, timeZone, "HH:mm:ss")) : null;
        if (rowDat[7] && rowDat[8]) schedBreak1 = { start: parseWindow(rowDat[7]), end: parseWindow(rowDat[8]) };
        if (rowDat[9] && rowDat[10]) schedLunch = { start: parseWindow(rowDat[9]), end: parseWindow(rowDat[10]) };
        if (rowDat[11] && rowDat[12]) schedBreak2 = { start: parseWindow(rowDat[11]), end: parseWindow(rowDat[12]) };
-       break;
+       
+       break; // Stop after finding the first matching schedule row
     }
   }
 
+  // *** CRITICAL FIX 1: WRITE LEAVE TYPE ***
+  // Ensure "Leave Type" (Column 14 / N) is populated
+  adherenceSheet.getRange(row, 14).setValue(scheduledLeaveType);
+
+  // Break Window Validation
+  let violation = "No";
   const checkWindow = (t, w) => w ? (t < w.start || t > w.end) : false;
   if (action === "First Break In" && schedBreak1 && checkWindow(nowTimestamp, schedBreak1)) violation = "Yes";
   else if (action === "Lunch In" && schedLunch && checkWindow(nowTimestamp, schedLunch)) violation = "Yes";
   else if (action === "Last Break In" && schedBreak2 && checkWindow(nowTimestamp, schedBreak2)) violation = "Yes";
+  
   if (violation === "Yes") adherenceSheet.getRange(row, 22).setValue("Yes");
 
-  // --- PHASE 8 UPDATE: SHIFT METRICS (OVERTIME THRESHOLD) ---
+  // === SHIFT METRICS (TARDY / EARLY / OT) ===
+  // Only calculate if we successfully found a schedule and parsed start time
   if (shiftStartDateObj) {
+    
     // 1. LOGIN Actions (Tardy & Pre-Shift Overtime)
-    if (action === "Login" || (punches.login && !adherenceSheet.getRange(row, 11).getValue())) {
+    // Run this logic on Login, or if Tardy column is currently empty (retry)
+    const currentTardy = adherenceSheet.getRange(row, 11).getValue();
+    if (action === "Login" || (punches.login && (currentTardy === "" || currentTardy === 0))) {
        const loginTime = action === "Login" ? nowTimestamp : punches.login;
        const diff = timeDiffInSeconds(shiftStartDateObj, loginTime); // Positive = Tardy, Negative = Early
        
        if (diff > 0) {
-         adherenceSheet.getRange(row, 11).setValue(diff); // Tardy
+         adherenceSheet.getRange(row, 11).setValue(diff); // Col K (11): Tardy
+         adherenceSheet.getRange(row, 24).setValue(0);    // Clear Pre-Shift OT
        } else {
          adherenceSheet.getRange(row, 11).setValue(0);
-         // Check Pre-Shift Overtime (Early Start)
+         
+         // *** CRITICAL FIX 2: Pre-Shift Overtime Calculation ***
          const earlySec = Math.abs(diff);
          const threshold = getBreakConfig("Overtime Pre-Shift").default;
          if (earlySec > threshold) {
-           adherenceSheet.getRange(row, 24).setValue(earlySec); // New Col 24
+           adherenceSheet.getRange(row, 24).setValue(earlySec); // Col X (24): Pre-Shift OT
+         } else {
+           adherenceSheet.getRange(row, 24).setValue(0);
          }
        }
     }
@@ -1395,17 +1427,17 @@ function punch(action, targetUserName, puncherEmail, adminTimestamp) {
        const diff = timeDiffInSeconds(shiftEndDateObj, logoutTime); // Positive = Overtime, Negative = Early Leave
        
        if (diff > 0) {
-         // Check Post-Shift Overtime Threshold
+         // Post-Shift Overtime
          const threshold = getBreakConfig("Overtime Post-Shift").default;
          if (diff > threshold) {
-           adherenceSheet.getRange(row, 12).setValue(diff); // Post Overtime
+           adherenceSheet.getRange(row, 12).setValue(diff); // Col L (12): Overtime
          } else {
-           adherenceSheet.getRange(row, 12).setValue(0); // Ignore if below threshold
+           adherenceSheet.getRange(row, 12).setValue(0);
          }
-         adherenceSheet.getRange(row, 13).setValue(0);
+         adherenceSheet.getRange(row, 13).setValue(0); // Early Leave is 0
        } else {
-         adherenceSheet.getRange(row, 12).setValue(0);
-         adherenceSheet.getRange(row, 13).setValue(Math.abs(diff)); // Early Leave
+         adherenceSheet.getRange(row, 12).setValue(0); // Overtime is 0
+         adherenceSheet.getRange(row, 13).setValue(Math.abs(diff)); // Col M (13): Early Leave
        }
     }
   }
@@ -1413,7 +1445,7 @@ function punch(action, targetUserName, puncherEmail, adminTimestamp) {
   // Net Login Hours
   if (action === "Logout" && punches.login) {
     const netHours = calculateNetHours(punches);
-    adherenceSheet.getRange(row, 23).setValue(netHours);
+    adherenceSheet.getRange(row, 23).setValue(netHours); // Col W (23)
   }
 
   return `${userName}: ${action} recorded at ${Utilities.formatDate(nowTimestamp, timeZone, "HH:mm:ss")}`;
@@ -2530,20 +2562,21 @@ function approveDenyRequest(adminEmail, requestID, newStatus, reason) {
 
 // ================= NEW/MODIFIED FUNCTIONS =================
 
+// ================= FIXED HISTORY READER =================
 function getAdherenceRange(adminEmail, userNames, startDateStr, endDateStr) {
   const ss = getSpreadsheet();
   const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
   const userData = getUserDataFromDb(dbSheet);
   const adminRole = userData.emailToRole[adminEmail] || 'agent';
   const timeZone = Session.getScriptTimeZone();
+  
   let targetUserNames = [];
-  // Security Check: If user is an agent, force userNames to be only them
   if (adminRole === 'agent') {
     const selfName = userData.emailToName[adminEmail];
     if (!selfName) throw new Error("Your user account was not found.");
     targetUserNames = [selfName];
   } else {
-    targetUserNames = userNames; // Admin can view the list they provided
+    targetUserNames = userNames;
   }
 
   const targetUserSet = new Set(targetUserNames.map(name => name.toLowerCase()));
@@ -2551,36 +2584,29 @@ function getAdherenceRange(adminEmail, userNames, startDateStr, endDateStr) {
   const endDate = new Date(endDateStr);
   startDate.setHours(0, 0, 0, 0);
   endDate.setHours(23, 59, 59, 999);
+  
   const results = [];
-
-  // *** NEW for Request 3: Get Schedule Data ***
   const scheduleSheet = getOrCreateSheet(ss, SHEET_NAMES.schedule);
   const scheduleData = scheduleSheet.getDataRange().getValues();
-  const scheduleMap = {}; // Key: "username:mm/dd/yyyy", Value: "LeaveType"
+  const scheduleMap = {}; 
 
   for (let i = 1; i < scheduleData.length; i++) {
     const schName = (scheduleData[i][0] || "").toLowerCase();
-    // Check against the lowercase name set
     if (targetUserSet.has(schName)) {
       try {
         const schDate = parseDate(scheduleData[i][1]);
         if (schDate >= startDate && schDate <= endDate) {
           const schDateStr = Utilities.formatDate(schDate, timeZone, "MM/dd/yyyy");
-          // *** THIS LINE IS THE FIX ***
-          // It now reads from index 5 (Column F) instead of 4 (Column E).
           const leaveType = scheduleData[i][5] || "Present";
-          // *** END OF FIX ***
           scheduleMap[`${schName}:${schDateStr}`] = leaveType;
         }
-      } catch (e) { /* ignore invalid schedule dates */ }
+      } catch (e) {}
     }
   }
-  // *** END NEW ***
 
-  // 1. Get Adherence Data
   const adherenceSheet = getOrCreateSheet(ss, SHEET_NAMES.adherence);
   const adherenceData = adherenceSheet.getDataRange().getValues();
-  const resultsLookup = new Set(); // *** NEW: To track found records ***
+  const resultsLookup = new Set();
 
   for (let i = 1; i < adherenceData.length; i++) {
     const row = adherenceData[i];
@@ -2601,46 +2627,46 @@ function getAdherenceRange(adminEmail, userNames, startDateStr, endDateStr) {
             lastBreakIn: convertDateToString(row[7]),
             lastBreakOut: convertDateToString(row[8]),
             logout: convertDateToString(row[9]),
-            tardy: row[10] || 0,
-            overtime: row[11] || 0,
-            earlyLeave: row[12] || 0,
-            leaveType: row[13],
+            // Fix: Explicitly parse numbers
+            tardy: Number(row[10]) || 0,
+            overtime: Number(row[11]) || 0,
+            earlyLeave: Number(row[12]) || 0,
+            leaveType: row[13] || "Present", // Fallback if missing
             firstBreakExceed: row[16] || 0,
             lunchExceed: row[17] || 0,
             lastBreakExceed: row[18] || 0,
-            preShiftOvertime: row[23] || 0,
-            otherCodes: [] // This property was unused, but keeping for consistency
+            breakWindowViolation: row[21] || "No",
+            netLoginHours: row[22] || 0,
+            preShiftOvertime: Number(row[23]) || 0 // Col X (Index 23)
           });
-          // *** NEW: Add to lookup ***
           const rDateStr = Utilities.formatDate(rowDate, timeZone, "MM/dd/yyyy");
           resultsLookup.add(`${rowUser}:${rDateStr}`);
         }
       } catch (e) {
-        Logger.log(`Skipping adherence row ${i+1}. Invalid date. Error: ${e.message}`);
+        Logger.log(`Skipping adherence row ${i+1}. Error: ${e.message}`);
       }
     }
   }
 
-  // *** NEW for Request 3: Fill in missing days ***
+  // Fill in missing days
   let currentDate = new Date(startDate);
   const oneDayInMs = 24 * 60 * 60 * 1000;
+  
   while (currentDate <= endDate) {
     const currentDateStr = Utilities.formatDate(currentDate, timeZone, "MM/dd/yyyy");
     for (const userName of targetUserNames) {
       const userNameLower = userName.toLowerCase();
       const adherenceKey = `${userNameLower}:${currentDateStr}`;
-      // If this user/day is NOT in the adherence sheet
+      
       if (!resultsLookup.has(adherenceKey)) {
         const scheduleKey = `${userNameLower}:${currentDateStr}`;
-        const leaveType = scheduleMap[scheduleKey]; // Get schedule (Present, Sick, etc)
-
-        let finalLeaveType = "Day Off"; // Default if no schedule
+        const leaveType = scheduleMap[scheduleKey]; 
+        let finalLeaveType = "Day Off";
+        
         if (leaveType) {
-          // If scheduled "Present" but no record, they were "Absent"
           finalLeaveType = (leaveType.toLowerCase() === "present") ? "Absent" : leaveType;
         }
 
-        // Add a stub record
         results.push({
           date: convertDateToString(currentDate),
           userName: userName,
@@ -2649,24 +2675,18 @@ function getAdherenceRange(adminEmail, userNames, startDateStr, endDateStr) {
           tardy: 0, overtime: 0, earlyLeave: 0,
           leaveType: finalLeaveType,
           firstBreakExceed: 0, lunchExceed: 0, lastBreakExceed: 0,
-          otherCodes: []
+          preShiftOvertime: 0
         });
       }
     }
     currentDate.setTime(currentDate.getTime() + oneDayInMs);
   }
-  // *** END NEW ***
 
-  // Sort by date, then by user name
   results.sort((a, b) => {
     if (a.date < b.date) return -1;
     if (a.date > b.date) return 1;
-    if (a.userName < b.userName) return -1;
-    if (a.userName > b.userName) return 1;
-    return 0;
+    return a.userName.localeCompare(b.userName);
   });
-  // This check is no longer needed as we fill stubs
-  // if (results.length === 0) { ... }
 
   return results;
 }
@@ -3041,20 +3061,21 @@ function getDashboardData(adminEmail, userEmails, date) {
         }
         
         // Metrics Summation
+        // Metrics Summation (Ensuring Pre-Shift OT is added)
         const tardy = parseFloat(row[10]) || 0;
-        const overtime = parseFloat(row[11]) || 0;
+        const overtime = parseFloat(row[11]) || 0; // Post-Shift
         const earlyLeave = parseFloat(row[12]) || 0;
         const breakExceed = (parseFloat(row[16]) || 0) + (parseFloat(row[18]) || 0);
         const lunchExceed = parseFloat(row[17]) || 0;
+        const preShiftOT = parseFloat(row[23]) || 0; // Col X (Index 23)
 
         // Sum deviation for Schedule Adherence
-        // Deviation = Time lost from schedule (Late, Early, Extra Break)
         totalDeviationSeconds += (tardy + earlyLeave + breakExceed + lunchExceed);
 
         if (userMetricsMap[userName]) {
           userMetricsMap[userName].tardy += tardy;
           userMetricsMap[userName].earlyLeave += earlyLeave;
-          userMetricsMap[userName].overtime += overtime;
+          userMetricsMap[userName].overtime += (overtime + preShiftOT); // Combined OT
           userMetricsMap[userName].breakExceed += breakExceed;
           userMetricsMap[userName].lunchExceed += lunchExceed;
         }
