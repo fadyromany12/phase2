@@ -2054,20 +2054,42 @@ body.dark-mode .status-offline { background-color: #374151; color: #9ca3af; }
           <hr class="section-divider">
 
           <form id="reporting-line-form" class="form-container">
-            <h2>Submit New Movement Request</h2>
-            <p class="text-color-secondary" style="margin: -16px 0 16px 0;">Select a user and their new supervisor. This will send a request to the new supervisor for approval.</p>
-            
-            <div class="form-group">
-  <label>Select User to Move</label>
-  <div id="reporting-line-user-container"></div>
-</div>
-<div class="form-group">
-  <label>Assign to New Supervisor</label>
-  <div id="reporting-line-supervisor-container"></div>
-</div>
-            
-            <button type="button" class="btn-primary" onclick="submitMovementRequest()">Submit Movement Request</button>
-          </form>
+  <h2>Submit New Movement Request</h2>
+  <p class="text-color-secondary" style="margin: -16px 0 16px 0;">Select a user to move. You will be prompted to confirm their Project Manager.</p>
+  
+  <div class="form-group">
+    <label>Select User to Move</label>
+    <div id="reporting-line-user-container" onchange="onReportingLineUserChange()"></div>
+  </div>
+
+  <div class="form-group">
+    <label>Assign New Direct Manager</label>
+    <div id="reporting-line-supervisor-container"></div>
+  </div>
+
+  <div id="pm-change-section" style="display:none; padding: 15px; background: var(--input-bg); border: 1px solid var(--border-color); border-radius: 6px; margin-bottom: 20px;">
+    <label style="color: var(--konecta-blue); font-weight:600;">Project Manager Selection</label>
+    <p style="margin: 5px 0 10px 0; font-size: 0.9rem;">
+      Current Project Manager: <strong id="current-pm-display">Loading...</strong>
+    </p>
+    
+    <div style="margin-bottom: 10px;">
+      <label style="margin-right: 15px; cursor: pointer;">
+        <input type="radio" name="pm-action" value="keep" checked onclick="togglePMDropdown(false)"> Keep Current
+      </label>
+      <label style="cursor: pointer;">
+        <input type="radio" name="pm-action" value="change" onclick="togglePMDropdown(true)"> Change
+      </label>
+    </div>
+
+    <div id="pm-dropdown-wrapper" style="display:none;">
+      <label>Select New Project Manager</label>
+      <div id="reporting-line-pm-container"></div>
+    </div>
+  </div>
+  
+  <button type="button" class="btn-primary" onclick="submitMovementRequest()">Submit Movement Request</button>
+</form>
           <div id="movement-request-status" class="status-message"></div>
 
           <hr class="section-divider">
@@ -2975,7 +2997,9 @@ function populateAdminDropdown(users, selfName, dropdownId, selfText, defaultVal
     'offboard-user-select': 'offboard-user-select-container',
     'hr-balance-user-select': 'hr-balance-user-select-container',
     'hr-offboard-user-select': 'hr-offboard-user-select-container',
-    'ot-employee-select': 'ot-employee-select-container'
+    'ot-employee-select': 'ot-employee-select-container',
+    // Inside populateAdminDropdown map:
+    'reporting-line-pm': 'reporting-line-pm-container'
   };
 
   // Special Handling for History (Multi-Select)
@@ -3004,6 +3028,10 @@ function populateAdminDropdown(users, selfName, dropdownId, selfText, defaultVal
           document.getElementById(containerId).appendChild(hidden);
       }
       hidden.value = val;
+      // NEW: Trigger change event manually for logic hooks
+      if (dropdownId === 'reporting-line-user') {
+          onReportingLineUserChange();
+      }
   }, defaultVal);
 }
       
@@ -4873,38 +4901,60 @@ function populateHistoryReport(data) {
           .webGetMyTeam();
       }
 
-     // --- Submit Movement Request (MODIFIED) ---
-      function submitMovementRequest() {
-        try {
-          const userEmail = document.getElementById('reporting-line-user').value;
-          const newSupervisorEmail = document.getElementById('reporting-line-supervisor').value;
+ // [index.html] UPDATED: Handle "Keep" vs "Change" robustly
+function submitMovementRequest() {
+  try {
+    const userEmail = document.getElementById('reporting-line-user').value;
+    const newSupervisorEmail = document.getElementById('reporting-line-supervisor').value;
+    
+    if (!userEmail) throw new Error("Please select a user to move.");
+    if (!newSupervisorEmail) throw new Error("Please select a new Direct Manager.");
+    if (userEmail === newSupervisorEmail) throw new Error("A user cannot be their own supervisor.");
 
-          if (!userEmail) throw new Error("Please select a user to move.");
-          if (!newSupervisorEmail) throw new Error("Please select a new supervisor.");
-          if (userEmail === newSupervisorEmail) throw new Error("A user cannot be their own supervisor.");
+    // Logic for Project Manager
+    let finalPMEmail = "";
+    
+    // Check if the radio buttons exist (safety check)
+    const pmRadio = document.querySelector('input[name="pm-action"]:checked');
+    const pmAction = pmRadio ? pmRadio.value : 'keep'; // Default to keep if hidden
+    
+    if (pmAction === 'keep') {
+       const displayEl = document.getElementById('current-pm-display');
+       finalPMEmail = displayEl.dataset.email;
+       
+       // FIX: If "Keep" is selected but the user HAS NO PM, force selection
+       if (!finalPMEmail || finalPMEmail === "undefined" || finalPMEmail === "null" || finalPMEmail === "") {
+           alert("This user currently has no Project Manager assigned. Please select 'Change' and assign one.");
+           return; 
+       }
+    } else {
+       finalPMEmail = document.getElementById('reporting-line-pm').value;
+       if (!finalPMEmail) throw new Error("Please select the new Project Manager from the dropdown.");
+    }
 
-          setStatus('movement-request-status', 'processing', 'Submitting movement request...');
+    setStatus('movement-request-status', 'processing', 'Submitting movement request...');
 
-          google.script.run
-            .withSuccessHandler(msg => {
-              if (msg.startsWith('Error:')) {
-                setStatus('movement-request-status', 'error', msg.replace('Error: ', ''));
-              } else {
-                setStatus('movement-request-status', 'success', msg);
-                document.getElementById('reporting-line-form').reset();
-                // Also refresh pending list, as the new request might appear
-                loadPendingMovements();
-              }
-            })
-            .withFailureHandler(err => {
-              setStatus('movement-request-status', 'error', err.message);
-            })
-            .webSubmitMovementRequest(userEmail, newSupervisorEmail); // <-- MODIFIED Function Name
+    google.script.run
+      .withSuccessHandler(msg => {
+        // If it was auto-approved (Superadmin) or pending (Admin), show the message
+        setStatus('movement-request-status', 'success', msg);
+        
+        // Reset form
+        document.getElementById('reporting-line-form').reset();
+        document.getElementById('pm-change-section').style.display = 'none';
+        
+        // Refresh the pending list (in case it was pending, it appears; in case approved, it won't)
+        loadPendingMovements();
+      })
+      .withFailureHandler(err => {
+        setStatus('movement-request-status', 'error', err.message);
+      })
+      .webSubmitMovementRequest(userEmail, newSupervisorEmail, finalPMEmail);
 
-        } catch (err) {
-          setStatus('movement-request-status', 'error', err.message);
-        }
-      }
+  } catch (err) {
+    setStatus('movement-request-status', 'error', err.message);
+  }
+}
 
       // --- NEW: Load Pending Movements ---
       function loadPendingMovements() {
@@ -5158,7 +5208,7 @@ function loadMyCoaching() {
     .webGetCoachingHistory(null);
 
   // 2. Load Dropdown (Hierarchy Aware) & SHOW FORM
-  if (selfRole === 'admin' || selfRole === 'superadmin' || selfRole === 'manager') {
+  if (selfRole === 'admin' || selfRole === 'superadmin' || selfRole === 'manager' || selfRole === 'project_manager') {
       const dropdownContainer = document.getElementById('coaching-agent-select-container');
       if (dropdownContainer) {
           dropdownContainer.innerHTML = '<span style="font-size:0.8rem; color:#666;">Loading team...</span>';
@@ -6874,7 +6924,7 @@ function filterCandidates() {
 
 function loadPerformanceTab() {
   // 1. Show Manager Section if Admin
-  if (selfRole === 'admin' || selfRole === 'superadmin') {
+  if (selfRole === 'admin' || selfRole === 'superadmin' || selfRole === 'manager' || selfRole === 'project_manager') {
     document.getElementById('manager-review-section').style.display = 'block';
     // Reuse your existing populate dropdown logic
     populateAdminDropdown(allUsersList, selfUserName, 'perf-employee-select', 'Select Employee');
@@ -7511,7 +7561,7 @@ function loadOvertimeTab() {
   document.getElementById('ot-req-date').valueAsDate = new Date();
   
   // 2. Show Manager Section if Permitted
-  if (selfRole === 'admin' || selfRole === 'superadmin' || selfRole === 'manager') {
+  if (selfRole === 'admin' || selfRole === 'superadmin' || selfRole === 'manager' || selfRole === 'project_manager') {
     document.getElementById('ot-manager-section').style.display = 'block';
     document.getElementById('ot-pre-date').valueAsDate = new Date();
     populateAdminDropdown(allUsersList, selfUserName, 'ot-employee-select', 'Select Employee');
@@ -7587,7 +7637,7 @@ function loadOvertimeRequests() {
 
         // Manager Actions
         let actions = '';
-        if (r.status === 'Pending' && (selfRole === 'admin' || selfRole === 'manager' || selfRole === 'superadmin')) {
+        if (r.status === 'Pending' && (selfRole === 'admin' || selfRole === 'manager' || selfRole === 'superadmin' || selfRole === 'project_manager')) {
           actions = `
             <div style="margin-top: 10px;">
               <button class="approve-btn" onclick="actionOvertime('${r.id}', 'Approved')">Approve</button>
@@ -7690,6 +7740,42 @@ function saveBreakConfig() {
       setStatus('break-config-status', 'error', err.message);
     })
     .webSaveBreakConfig(newConfigs);
+}
+
+// 1. Triggered when a user is selected in the "Reporting Line" tab
+function onReportingLineUserChange() {
+  setTimeout(() => {
+    const userEmail = document.getElementById('reporting-line-user').value;
+    if (!userEmail) {
+      document.getElementById('pm-change-section').style.display = 'none';
+      return;
+    }
+
+    // Find user in global list
+    const user = allUsersList.find(u => u.email === userEmail);
+    if (user) {
+      // Show section
+      document.getElementById('pm-change-section').style.display = 'block';
+      
+      // Display Current PM
+      const currentPM = user.projectManager || "None";
+      const pmName = allUsersList.find(u => u.email === currentPM)?.name || currentPM;
+      
+      document.getElementById('current-pm-display').innerText = pmName;
+      document.getElementById('current-pm-display').dataset.email = currentPM; 
+
+      // Reset Radio to Keep
+      document.querySelector('input[name="pm-action"][value="keep"]').checked = true;
+      togglePMDropdown(false);
+      
+      // --- FIX: Use 'allAdminsList' to show only Managers/Admins in the dropdown ---
+      populateAdminDropdown(allAdminsList, selfUserName, 'reporting-line-pm', 'Select New Project Manager');
+    }
+  }, 200); 
+}
+// 2. Toggles the dropdown visibility
+function togglePMDropdown(show) {
+  document.getElementById('pm-dropdown-wrapper').style.display = show ? 'block' : 'none';
 }
 
 
