@@ -2425,9 +2425,10 @@ function submitLeaveRequest(submitterEmail, request, targetUserEmail) {
 
 function approveDenyRequest(adminEmail, requestID, newStatus, reason) {
   const ss = getSpreadsheet();
-  const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database); 
-  const userData = getUserDataFromDb(dbSheet); 
-  
+  // FIX: Use 'employeesCore' explicitly because that is where balances (Annual/Sick/Casual) live.
+  const coreSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesCore); 
+  const userData = getUserDataFromDb(ss); // Pass 'ss', not a sheet object
+
   // Security Check
   const adminRole = userData.emailToRole[adminEmail] || 'agent';
   if (adminRole === 'agent') throw new Error("Permission denied.");
@@ -2437,7 +2438,7 @@ function approveDenyRequest(adminEmail, requestID, newStatus, reason) {
   
   let rowIndex = -1;
   let requestRow = [];
-
+  
   // Find Request
   for (let i = 1; i < allData.length; i++) { 
     if (allData[i][0] === requestID) { 
@@ -2449,79 +2450,95 @@ function approveDenyRequest(adminEmail, requestID, newStatus, reason) {
   if (rowIndex === -1) throw new Error("Request ID not found.");
 
   const currentStatus = requestRow[1]; // Column B
-  const assignedApprover = (requestRow[11] || "").toLowerCase(); // Column L
   const requesterEmail = requestRow[2];
+  
+  // Col O (Index 14) = Direct Manager Snapshot
+  // Col P (Index 15) = Project Manager Snapshot
+  const directManager = requestRow[14]; 
+  const projectManager = requestRow[15]; 
 
-  // 1. Validate Approver
-  // Superadmins can override, otherwise must be the assigned approver
-  if (adminRole !== 'superadmin' && assignedApprover !== adminEmail) {
-    throw new Error("This request is not currently assigned to you for approval.");
-  }
-
-  // 2. Handle Denial (Immediate Stop)
+  // 1. Handle Denial (Immediate Stop)
   if (newStatus === 'Denied') {
     reqSheet.getRange(rowIndex, 2).setValue("Denied");
-    reqSheet.getRange(rowIndex, 10).setValue(new Date());
-    reqSheet.getRange(rowIndex, 11).setValue(adminEmail);
+    reqSheet.getRange(rowIndex, 10).setValue(new Date()); // ActionDate
+    reqSheet.getRange(rowIndex, 11).setValue(adminEmail); // ActionBy
     reqSheet.getRange(rowIndex, 13).setValue(reason || "Denied by " + adminEmail);
-    return "Request denied.";
+    return "Request denied and closed.";
   }
 
-  // 3. Handle Approval Logic (State Machine)
+  // 2. Handle Approval Logic (Chain: Direct Mgr -> Project Mgr -> Approved)
   
-  // CASE A: Project Manager Approving -> Move to Direct Manager
-  if (currentStatus === "Pending Project Mgr") {
-    const directManager = userData.emailToSupervisor[requesterEmail];
-    if (!directManager) throw new Error("Direct Manager not found for next step.");
-
-    reqSheet.getRange(rowIndex, 2).setValue("Pending Direct Mgr"); // Update Status
-    reqSheet.getRange(rowIndex, 12).setValue(directManager);       // Update Assigned Approver
-    reqSheet.getRange(rowIndex, 13).setValue(`Project Mgr (${adminEmail}) Approved. Forwarded to Direct Mgr.`); // Log history in reason
-    
-    return "Project Manager Approval Recorded. Request forwarded to Direct Manager.";
+  // STEP 1: Direct Manager Approves
+  if (currentStatus === "Pending Direct Mgr") {
+    // Check if there is a Project Manager to forward to.
+    // Logic: If PM exists, is NOT "na", and is DIFFERENT from Direct Mgr, forward it.
+    if (projectManager && projectManager !== "" && projectManager.toLowerCase() !== "na" && projectManager !== directManager) {
+      // Forward to Project Manager
+      reqSheet.getRange(rowIndex, 2).setValue("Pending Project Mgr"); // Update Status
+      reqSheet.getRange(rowIndex, 12).setValue(projectManager);       // Update Assigned Approver (Col L)
+      reqSheet.getRange(rowIndex, 13).setValue(`Direct Mgr (${adminEmail}) Approved. Forwarded to Project Mgr.`);
+      return "Approved by Direct Manager. Forwarded to Project Manager for final approval.";
+    } else {
+      // No Project Manager (or same person), so Finalize immediately
+      return finalizeLeaveApproval(ss, coreSheet, userData, reqSheet, rowIndex, requestRow, adminEmail, reason);
+    }
   }
 
-  // CASE B: Direct Manager Approving -> Finalize
-  if (currentStatus === "Pending Direct Mgr" || currentStatus === "Pending") {
-    // Deduct Balance Logic
+  // STEP 2: Project Manager Approves
+  if (currentStatus === "Pending Project Mgr") {
+    return finalizeLeaveApproval(ss, coreSheet, userData, reqSheet, rowIndex, requestRow, adminEmail, reason);
+  }
+
+  // Fallback for "Pending" (Legacy or simple flow)
+  if (currentStatus === "Pending") {
+     return finalizeLeaveApproval(ss, coreSheet, userData, reqSheet, rowIndex, requestRow, adminEmail, reason);
+  }
+
+  throw new Error(`Invalid Request Status for Approval: ${currentStatus}`);
+}
+
+// HELPER: Finalizes the request (Deducts balance, Adds to schedule, Updates status)
+function finalizeLeaveApproval(ss, coreSheet, userData, reqSheet, rowIndex, requestRow, adminEmail, reason) {
+    const requesterEmail = requestRow[2];
     const leaveType = requestRow[4];
     const totalDays = requestRow[7];
     const balanceKey = leaveType.toLowerCase();
     
-    // Map balance columns (Standard: Annual=H(7), Sick=I(8), Casual=J(9)) 
-    // *Note: Index in array is 0-based, Column in sheet is 1-based.
-    // getUserDataFromDb mapped these. Let's find the Col index dynamically or assume standard.
-    // Standard Core Sheet: Annual(H=8), Sick(I=9), Casual(J=10) based on new structure?
-    // Let's use getUserDataFromDb row index mapping.
-    
+    // 1. Deduct Balance from Employees_Core
     const userDBRow = userData.emailToRow[requesterEmail];
-    const colMap = { "annual": 8, "sick": 9, "casual": 10 }; // Matches Employees_Core structure
+    
+    // Column Mapping for Employees_Core (1-based index)
+    // H=8 (Annual), I=9 (Sick), J=10 (Casual)
+    const colMap = { "annual": 8, "sick": 9, "casual": 10 };
     const balanceCol = colMap[balanceKey];
-
-    if (balanceCol) {
-      const balanceRange = dbSheet.getRange(userDBRow, balanceCol);
-      const currentBal = balanceRange.getValue();
+    
+    if (balanceCol && userDBRow) {
+      // Ensure we are reading/writing numbers
+      const balanceRange = coreSheet.getRange(userDBRow, balanceCol);
+      const currentBal = parseFloat(balanceRange.getValue()) || 0;
       balanceRange.setValue(currentBal - totalDays);
+    } else {
+      // If it's a type like "Absent" or "Unpaid", we might not deduct, or log warning.
+      console.warn(`No balance column found for type: ${leaveType}`);
     }
 
-    // Submit Schedule (Auto-log)
-    // Call existing submitScheduleRange logic
+    // 2. Submit Schedule (Auto-log to Schedule Sheet)
     const reqName = requestRow[3];
-    const reqStartDateStr = Utilities.formatDate(new Date(requestRow[5]), Session.getScriptTimeZone(), "yyyy-MM-dd");
-    const reqEndDateStr = Utilities.formatDate(new Date(requestRow[6]), Session.getScriptTimeZone(), "yyyy-MM-dd");
+    // Format dates for the schedule function
+    const reqStartDateStr = Utilities.formatDate(new Date(requestRow[5]), Session.getScriptTimeZone(), "MM/dd/yyyy");
+    const reqEndDateStr = Utilities.formatDate(new Date(requestRow[6]), Session.getScriptTimeZone(), "MM/dd/yyyy");
     
+    // Call existing schedule function
+    // (Ensure submitScheduleRange is defined in your code.gs)
     submitScheduleRange(adminEmail, requesterEmail, reqName, reqStartDateStr, reqEndDateStr, "", "", leaveType);
 
-    // Finalize Request Sheet
+    // 3. Update Request Sheet to "Approved"
     reqSheet.getRange(rowIndex, 2).setValue("Approved");
-    reqSheet.getRange(rowIndex, 10).setValue(new Date());
-    reqSheet.getRange(rowIndex, 11).setValue(adminEmail);
-    reqSheet.getRange(rowIndex, 13).setValue(reason || "");
+    reqSheet.getRange(rowIndex, 10).setValue(new Date()); // ActionDate
+    reqSheet.getRange(rowIndex, 11).setValue(adminEmail); // ActionBy
+    reqSheet.getRange(rowIndex, 13).setValue(reason || "Final Approval");
 
     return "Final Approval Granted. Schedule updated and balance deducted.";
-  }
-
-  return "Error: Invalid Request Status.";
 }
 
 // ================= NEW/MODIFIED FUNCTIONS =================
@@ -4095,6 +4112,119 @@ function webUpdateProfile(formData) {
   }
 
   return "Profile updated successfully.";
+}
+
+// 1. Submit a Change Request (Agent)
+function webSubmitDataChangeRequest(field, newValue, reason) {
+  const { userEmail, userName, ss } = getAuthorizedContext(null);
+  const reqSheet = getOrCreateSheet(ss, "Data_Change_Requests");
+  
+  // Get current value for logging (simplified)
+  // In a real scenario, we'd fetch the specific field from PII/Core
+  const oldValue = "Current Value"; 
+
+  const reqID = `CHG-${new Date().getTime()}`;
+  reqSheet.appendRow([
+    reqID,
+    userEmail,
+    userName,
+    field,
+    oldValue,
+    newValue,
+    reason,
+    "Pending",
+    new Date(),
+    "", // ActionBy
+    ""  // ActionDate
+  ]);
+  
+  return "Change request submitted to HR.";
+}
+
+// 2. Get Pending Requests (HR/Admin)
+function webGetDataChangeRequests() {
+  const { userEmail, userData, ss } = getAuthorizedContext('OFFBOARD_EMPLOYEE'); // Reusing HR permission
+  const reqSheet = getOrCreateSheet(ss, "Data_Change_Requests");
+  const data = reqSheet.getDataRange().getValues();
+  const requests = [];
+  
+  for (let i = 1; i < data.length; i++) {
+    // Col H (index 7) is Status
+    if (data[i][7] === 'Pending') {
+      requests.push({
+        id: data[i][0],
+        email: data[i][1],
+        name: data[i][2],
+        field: data[i][3],
+        oldVal: data[i][4],
+        newVal: data[i][5],
+        reason: data[i][6],
+        date: convertDateToString(new Date(data[i][8]))
+      });
+    }
+  }
+  return requests;
+}
+
+// 3. Approve/Deny Request (HR/Admin)
+function webActionDataChangeRequest(reqId, action) {
+  const { userEmail: adminEmail, ss, userData } = getAuthorizedContext('OFFBOARD_EMPLOYEE');
+  const reqSheet = getOrCreateSheet(ss, "Data_Change_Requests");
+  const data = reqSheet.getDataRange().getValues();
+  
+  let rowIndex = -1;
+  let reqData = null;
+  
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === reqId) {
+      rowIndex = i + 1;
+      reqData = {
+        email: data[i][1],
+        field: data[i][3],
+        newValue: data[i][5]
+      };
+      break;
+    }
+  }
+  
+  if (rowIndex === -1) throw new Error("Request not found.");
+  
+  if (action === 'Approved') {
+    // PERFORM THE UPDATE
+    if (reqData.field === 'IBAN' || reqData.field === 'NationalID' || reqData.field === 'Address' || reqData.field === 'Phone') {
+       updateEmployeePIIField(ss, userData, reqData.email, reqData.field, reqData.newValue);
+    } else {
+       // Handle Core fields if necessary
+    }
+  }
+  
+  // Update Request Status
+  reqSheet.getRange(rowIndex, 8).setValue(action); // Status
+  reqSheet.getRange(rowIndex, 10).setValue(adminEmail); // ActionBy
+  reqSheet.getRange(rowIndex, 11).setValue(new Date()); // ActionDate
+  
+  return `Request ${action}.`;
+}
+
+// Helper to update PII Sheet
+function updateEmployeePIIField(ss, userData, targetEmail, fieldName, newValue) {
+  const piiSheet = getOrCreateSheet(ss, SHEET_NAMES.employeesPII);
+  const piiData = piiSheet.getDataRange().getValues();
+  const headers = piiData[0];
+  const colIndex = headers.indexOf(fieldName); // e.g. "IBAN"
+  
+  if (colIndex === -1) throw new Error(`Field ${fieldName} not found in PII sheet.`);
+  
+  const empID = userData.userList.find(u => u.email === targetEmail)?.empID;
+  if (!empID) throw new Error("User ID not found.");
+  
+  for (let i = 1; i < piiData.length; i++) {
+    if (piiData[i][0] === empID) {
+      piiSheet.getRange(i + 1, colIndex + 1).setValue(newValue);
+      return;
+    }
+  }
+  throw new Error("PII Record not found for user.");
 }
 
 /**
