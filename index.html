@@ -7633,13 +7633,13 @@ function saveBreakConfig() {
         loadUserInfo(); 
         
         // --- PHASE 6: AUTO-REFRESH ---
-        // Refresh data every 60 seconds to keep the dashboard and status live
+        // Refresh data every 600 seconds to keep the dashboard and status live
         setInterval(() => {
             if (!document.hidden) { // Only refresh if tab is visible
                 console.log("Auto-refreshing data...");
                 refreshCurrentData();
             }
-        }, 60000);
+        }, 600000);
         // -----------------------------
 
         // Set default dates
